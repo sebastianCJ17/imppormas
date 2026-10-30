@@ -1,0 +1,52 @@
+{
+  "TEST-REF-9999": {
+    "product_id": "8070120",
+    "quantity": 999999,
+    "product_name": "Aldeano Plastico Clasico de 12cm Set x 3 unidades",
+    "amountInCents": 100000,
+    "createdAt": 1788879381096
+  },
+  "WMP-TEST-1790868998039": {
+    "customer_name": "Cliente Verificacion Items",
+    "customer_email": "test@impormax.com",
+    "customer_phone": "3001234567",
+    "customer_document": "1098765432",
+    "shipping_address": "Calle 14 # 20-30",
+    "shipping_city": "Pereira",
+    "total_amount": 350000,
+    "deposit_amount": 105000,
+    "items": [
+      {
+        "product_id": "8050893",
+        "product_reference": "",
+        "product_name": "Corona Nevada",
+        "quantity": 2,
+        "unit_price": 100000,
+        "discount_percentage": 0,
+        "discount_amount": 0,
+        "subtotal": 200000,
+        "tax": 31933,
+        "total": 200000,
+        "warehouse_origin": "05",
+        "warehouse_destination": "07"
+      },
+      {
+        "product_id": "8050402",
+        "product_reference": "",
+        "product_name": "Decoración Navideña Flor",
+        "quantity": 1,
+        "unit_price": 150000,
+        "discount_percentage": 0,
+        "discount_amount": 0,
+        "subtotal": 150000,
+        "tax": 23950,
+        "total": 150000,
+        "warehouse_origin": "05",
+        "warehouse_destination": "07"
+      }
+    ],
+    "orderId": "bc01e2ca-a481-4d6a-b2a2-0e18bb8a845e",
+    "amountInCents": 10500000,
+    "createdAt": 1790868998219
+  }
+}

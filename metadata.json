@@ -1,0 +1,8 @@
+{
+  "name": "Remix Remix Remix Remix Remix Plan Separe Impormax",
+  "description": "Plataforma oficial de Plan Separe de Árboles de Navidad para Impormax. Catálogo dinámico, consulta de saldos, historial de abonos e integración con checkouts.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
