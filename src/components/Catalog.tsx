@@ -152,7 +152,23 @@ export default function Catalog({
   ];
 
   // Filter & Sort products based on selected criteria
-  const inStockProducts = products.filter((prod) => (prod.stock ?? 0) >= 1);
+  // Regla estricta de catálogo:
+  // 1. Stock / unidades disponibles >= 1
+  // 2. Si el producto no cuenta con fotografía real del ERP, NO mostrarlo en la landing
+  const inStockProducts = products.filter((prod) => {
+    const hasStock = (prod.stock ?? 0) >= 1;
+    const img = String(prod.imageUrl || '').trim();
+    const hasValidPhoto = Boolean(
+      img &&
+      img !== '' &&
+      !img.includes('placeholder') &&
+      !img.endsWith('/') &&
+      !img.endsWith('null') &&
+      !img.endsWith('0.jpg') &&
+      !img.includes('undefined')
+    );
+    return hasStock && hasValidPhoto;
+  });
   const newProductsCount = inStockProducts.filter((prod) => isProductNew(prod)).length;
 
   const filteredProducts = inStockProducts.filter((prod) => {
@@ -798,16 +814,14 @@ function ProductCard({
 }) {
   const [slideIndex, setSlideIndex] = useState(0);
 
-  // Gallery of images for this card
+  // Gallery of images for this card - Únicamente fotos reales traídas del ERP
   const images = Array.from(
     new Set(
       [
         p.imageUrl,
         ...(p.images || []),
-        p.fallbackImageUrl,
-        'https://images.unsplash.com/photo-1544816155-12df9643f363?auto=format&fit=crop&q=80&w=800',
-        'https://images.unsplash.com/photo-1512413990053-0df13b3189a0?auto=format&fit=crop&q=80&w=800'
-      ].filter((img): img is string => Boolean(img) && typeof img === 'string')
+        p.fallbackImageUrl
+      ].filter((img): img is string => Boolean(img) && typeof img === 'string' && img.trim() !== '' && !img.includes('unsplash.com'))
     )
   );
 

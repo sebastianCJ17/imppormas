@@ -192,8 +192,21 @@ export const apiService = {
       if (!response.ok) throw new Error("Fallo al consultar productos del servidor proxy");
       const data = await response.json();
       if (Array.isArray(data) && data.length > 0) {
-        // Regla estricta: Solo mostrar cuando el stock/saldo esté al menos en 1
-        return (data as Product[]).filter((p) => (p.stock ?? 0) >= 1);
+        // Regla estricta: Solo mostrar productos con stock/saldo >= 1 y con fotografía real
+        return (data as Product[]).filter((p) => {
+          const hasStock = (p.stock ?? 0) >= 1;
+          const img = String(p.imageUrl || '').trim();
+          const hasPhoto = Boolean(
+            img &&
+            img !== '' &&
+            !img.includes('placeholder') &&
+            !img.endsWith('/') &&
+            !img.endsWith('null') &&
+            !img.endsWith('0.jpg') &&
+            !img.includes('undefined')
+          );
+          return hasStock && hasPhoto;
+        });
       }
     } catch (error) {
       console.warn("Failing Yeminus API, using premium fallback catalog:", error);

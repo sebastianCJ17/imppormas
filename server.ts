@@ -858,10 +858,10 @@ function saveSaldosToLocalFile(saldos: any[]) {
 }
 
 async function fetchYeminusSaldos(options: { force?: boolean; anio?: string; mes?: string; bodegas?: string[]; grupo?: string } = {}): Promise<any[]> {
-  const d = new Date();
-  const currentYear = String(d.getFullYear());
-  const currentMonth = String(d.getMonth() + 1);
-  const { force = false, anio = currentYear, mes = currentMonth, bodegas = ["05"], grupo = "80" } = options;
+  const activeAnio = process.env.YEMINUS_ANIO || "2026";
+  const activeMes = process.env.YEMINUS_MES || "7";
+  const activeCaja = process.env.YEMINUS_ID_CAJA || "2";
+  const { force = false, anio = activeAnio, mes = activeMes, bodegas = ["05"], grupo = "80" } = options;
 
   if (!force && saldosCache && (Date.now() - saldosCache.timestamp < SALDOS_CACHE_TTL)) {
     return saldosCache.data;
@@ -887,7 +887,7 @@ async function fetchYeminusSaldos(options: { force?: boolean; anio?: string; mes
     headers: {
       "Content-Type": "application/json",
       "id_empresa": "02",
-      "id_caja": "9",
+      "id_caja": activeCaja,
       "usuario": "API",
       "Authorization": `Bearer ${token}`
     },
@@ -1352,15 +1352,17 @@ async function fetchYeminusCatalog(options: { skipImageCheck?: boolean; force?: 
 
   // Consultar Saldos por Periodo oficiales de Yeminus (Bodega 05 - BODEGA PUNTO DE VENTA)
   const fetchGroupSaldos = async (grupo: string): Promise<any[]> => {
-    const d = new Date();
+    const activeAnio = process.env.YEMINUS_ANIO || "2026";
+    const activeMes = process.env.YEMINUS_MES || "7";
+    const activeCaja = process.env.YEMINUS_ID_CAJA || "2";
     const payload = {
       filtroProducto: {
         filtrar: true,
         grupo: String(grupo)
       },
-      anio: String(d.getFullYear()),
+      anio: activeAnio,
       bodegas: ["05"],
-      mes: String(d.getMonth() + 1)
+      mes: activeMes
     };
 
     try {
@@ -1369,7 +1371,7 @@ async function fetchYeminusCatalog(options: { skipImageCheck?: boolean; force?: 
         headers: {
           "Content-Type": "application/json",
           "id_empresa": idEmpresa,
-          "id_caja": "9",
+          "id_caja": activeCaja,
           "usuario": usuario,
           "Authorization": `Bearer ${token}`
         },
@@ -1435,7 +1437,7 @@ async function fetchYeminusCatalog(options: { skipImageCheck?: boolean; force?: 
   for (const it of rawSaldosList) {
     const pCode = String(it.producto || "").trim();
     const pRef = String(it.referencia || "").trim();
-    const rawQty = Number(it.cantidad !== undefined ? it.cantidad : it.existencia);
+    const rawQty = Number(it.saldo !== undefined && it.saldo !== null ? it.saldo : (it.cantidad !== undefined && it.cantidad !== null ? it.cantidad : (it.existencia !== undefined && it.existencia !== null ? it.existencia : it.stock)));
     const validQty = !isNaN(rawQty) ? rawQty : 0;
     if (pCode) combinedSaldoMap.set(pCode, validQty);
     if (pRef) combinedSaldoMap.set(pRef, validQty);
@@ -1458,20 +1460,21 @@ async function fetchYeminusCatalog(options: { skipImageCheck?: boolean; force?: 
       const isActive = p.estado === "A" || p.estado === undefined;
       if (!isActive) return false;
 
-      // 2. Debe estar en estado con foto lista ("EN LA TIENDA" idEstado 49 o "CON FOTOS" idEstado 2) y tener archivo de imagen
-      const hasPhotoStatus =
-        p.idEstado === 49 ||
-        p.idEstado === 2 ||
-        p.descripcionEstado === "EN LA TIENDA" ||
-        p.descripcionEstado === "CON FOTOS";
-
-      const hasPhotoFile = Boolean(
-        p.archivoFoto1 &&
-        String(p.archivoFoto1).trim() !== "" &&
-        String(p.archivoFoto1).trim() !== "null"
+      // 2. REGLA ESTRICTA DE FOTOGRAFÍA:
+      // Si el producto no cuenta con fotografía, NO mostrarlo en la landing hasta que la consulta traiga la foto
+      const photoName = String(p.archivoFoto1 || "").trim();
+      const hasValidPhoto = Boolean(
+        photoName &&
+        photoName !== "" &&
+        photoName !== "0" &&
+        photoName !== "null" &&
+        photoName !== "undefined" &&
+        photoName !== "none" &&
+        photoName !== "--" &&
+        photoName.length > 3
       );
 
-      if (!hasPhotoStatus || !hasPhotoFile) return false;
+      if (!hasValidPhoto) return false;
 
       // 3. Regla de Saldo/Stock de Yeminus (Bodega 05 - Punto de Venta):
       const internalCode = String(p.producto || "").trim();
@@ -1557,16 +1560,18 @@ async function fetchYeminusCatalog(options: { skipImageCheck?: boolean; force?: 
         (Number(item.precio1) ? Math.round(Number(item.precio1) * 1.19) : 0);
       const price = list8ItemPrice > 0 ? list8ItemPrice : (list1ItemPrice > 0 ? list1ItemPrice : 0);
 
-      // Descuento según Lista 8 (Pagina_Web), porcentaje general o Lista 1
+      // Descuento según Yeminus ERP
       let rawDiscount = 0;
-      if (Number(item.precioDescuento8) > 0) {
-        rawDiscount = Number(item.precioDescuento8);
-      } else if (Number(item.porcentajeDescuento) > 0) {
-        rawDiscount = Number(item.porcentajeDescuento);
-      } else if (Number(item.precioDescuento1) > 0) {
-        rawDiscount = Number(item.precioDescuento1);
-      } else if (Number(item.descuento) > 0) {
-        rawDiscount = Number(item.descuento);
+      if (item.sinDescuento === "S" || item.sinDescuento === true) {
+        rawDiscount = 0;
+      } else {
+        const pctGeneral = Number(item.porcentajeDescuento) || 0;
+        const pctLista8 = Number(item.precioDescuento8) || 0;
+        const pctLista1 = Number(item.precioDescuento1) || 0;
+        const pctDesc = Number(item.descuento) || 0;
+
+        // Seleccionar el mayor descuento configurado entre listas activas y porcentaje general del ERP
+        rawDiscount = Math.max(pctGeneral, pctLista8, pctLista1, pctDesc);
       }
 
       let discountPercentage = 0;
@@ -3964,6 +3969,29 @@ app.post("/api/orders/approve-payment", async (req, res) => {
             product_name: it.nombre
           })), syncRes.document_id);
         }
+      } else {
+        // YA TIENE SLP OFICIAL EN YEMINUS -> Registrar el pago del abono en Yeminus
+        try {
+          const abonoAmt = paymentAmount > 0 ? paymentAmount : incAmount;
+          let docRef = orderToSync.yeminus_document_id || "";
+          if (!docRef && currentProdName) {
+            const m = currentProdName.match(/\[Ref:\s*([^\]]+)\]/i);
+            if (m && m[1]) docRef = m[1].trim();
+          }
+
+          const abonoRes = await registerYeminusAbonoInternal({
+            order_id: updatedOrderId || orderToSync.id,
+            amount: abonoAmt,
+            payment_reference: orderToSync.wompi_reference || `ABONO-MANUAL-${Date.now()}`,
+            customer_document: orderToSync.customer_document || orderToSync.cliente_documento,
+            slp_document_id: docRef,
+            payment_method: orderToSync.payment_method || "wompi"
+          });
+          logApi("SUCCESS", "APPROVE_PAYMENT_SLP_ABONO", `Abono de $${abonoAmt} aplicado exitosamente a Yeminus SLP ${docRef}`, abonoRes);
+          yeminusSyncResult = docRef;
+        } catch (abonoErr: any) {
+          console.warn("[APPROVE PAYMENT SLP ABONO WARN]", abonoErr.message);
+        }
       }
 
       if (supabase && (updatedOrderId || orderToSync.id)) {
@@ -4048,6 +4076,21 @@ app.post("/api/orders/approve-order", adminAuthMiddleware, async (req, res) => {
         })), syncRes.document_id);
       } else {
         db.prepare(`UPDATE orders SET yeminus_sync_status = 'ERP_SYNC_FAILED', yeminus_last_error = ? WHERE id = ?`).run(syncRes.error || "Error ERP", orderId || orderToSync.id);
+      }
+    } else {
+      // Ya tiene documento radicado en Yeminus -> Asentar el abono contra el SLP existente
+      try {
+        await registerYeminusAbonoInternal({
+          order_id: orderId || orderToSync.id,
+          amount: newPaid,
+          payment_reference: orderToSync.wompi_reference || `ABONO-ORD-${Date.now()}`,
+          customer_document: orderToSync.customer_document,
+          slp_document_id: orderToSync.yeminus_document_id,
+          payment_method: orderToSync.payment_method || "wompi"
+        });
+        yeminusSyncResult = orderToSync.yeminus_document_id;
+      } catch (abonoErr: any) {
+        console.warn("[APPROVE ORDER SLP ABONO WARN]", abonoErr.message);
       }
     }
 
@@ -4324,7 +4367,7 @@ app.post("/api/orders/clear-all", adminAuthMiddleware, async (req, res) => {
   }
 });
 
-// Función interna para registrar abonos RLP directamente en Yeminus sin loops HTTP
+// Función interna para registrar abonos directamente en Yeminus (SLP pagarfactura + RLP recibo)
 async function registerYeminusAbonoInternal(data: {
   order_id?: string;
   amount: number;
@@ -4333,30 +4376,93 @@ async function registerYeminusAbonoInternal(data: {
   slp_document_id?: string;
   payment_method?: string;
 }) {
-  const endpoint = "/gateway/cuentasporcobrar/carteraclientes/agregarecibo";
   const idEmpresa = process.env.YEMINUS_ID_EMPRESA || "02";
   const usuario = process.env.YEMINUS_USUARIO || "API";
   const idCaja = process.env.YEMINUS_ID_CAJA || "2";
 
   const { customer_document, amount, payment_method, payment_reference } = data;
   let slp_document_id = data.slp_document_id;
+  const token = await getAccessToken();
+
+  // 1. Resolver pedido en SQLite o Supabase para obtener el radicado oficial SLP
+  let orderSql: any = null;
+  if (data.order_id) {
+    orderSql = getOrderById(data.order_id) || getOrderByWompiRef(data.order_id);
+    if (!slp_document_id && orderSql?.yeminus_document_id) {
+      slp_document_id = orderSql.yeminus_document_id;
+    }
+  }
+
+  if (!slp_document_id && data.payment_reference) {
+    orderSql = orderSql || getOrderByWompiRef(data.payment_reference);
+    if (orderSql?.yeminus_document_id) {
+      slp_document_id = orderSql.yeminus_document_id;
+    }
+  }
 
   if (!slp_document_id && data.order_id) {
     const supabase = getSupabaseAdmin();
     if (supabase) {
-      const { data: ord } = await supabase.from("pedidos").select("producto_name").eq("id", data.order_id).single();
-      if (ord && ord.producto_name) {
-        const m = ord.producto_name.match(/\[Ref:\s*([^\]]+)\]/i);
-        if (m && m[1]) slp_document_id = m[1].trim();
-      }
+      try {
+        const { data: ord } = await supabase.from("pedidos").select("producto_name").eq("id", data.order_id).maybeSingle();
+        if (ord && ord.producto_name) {
+          const m = ord.producto_name.match(/\[Ref:\s*([^\]]+)\]/i);
+          if (m && m[1]) slp_document_id = m[1].trim();
+        }
+      } catch {}
     }
   }
 
-  let cleanCustomerDoc = parseInt(String(customer_document || "").replace(/\D/g, ""));
+  let slpNumero: number | null = null;
+  if (slp_document_id) {
+    const match = slp_document_id.match(/SLP-SLP-(\d+)/i) || slp_document_id.match(/SLP-(\d+)/i) || slp_document_id.match(/(\d+)/);
+    if (match && match[1]) {
+      slpNumero = parseInt(match[1], 10);
+    }
+  }
+
+  logApi("INFO", "YEMINUS_ABONO_INIT", `Procesando abono de $${amount} COP para pedido ${data.order_id || payment_reference} (SLP Doc: ${slp_document_id || 'N/A'}, Número: ${slpNumero || 'N/A'})`);
+
+  let slpPaySuccess = false;
+  let slpPayResult: any = null;
+
+  // 2. Si el pedido tiene documento SLP en Yeminus, asentar el pago del abono directamente en el SLP (pagarfactura)
+  if (slpNumero && slpNumero > 0) {
+    try {
+      const payRes = await payYeminusSLPDocument({
+        numero: slpNumero,
+        valorPagado: Math.round(amount),
+        token
+      });
+      if (payRes.success) {
+        slpPaySuccess = true;
+        slpPayResult = payRes.raw;
+        logApi("SUCCESS", "YEMINUS_ABONO_SLP_PAID", `Abono de $${amount} COP aplicado con éxito a SLP ${slpNumero} en Yeminus ERP`, payRes.raw);
+
+        // Contabilizar documento SLP tras pago del abono
+        try {
+          await contabilizeYeminusSLPDocument({
+            numero: slpNumero,
+            token
+          });
+        } catch (contErr: any) {
+          console.warn("[ABONO CONTABILIZE WARN]", contErr.message);
+        }
+      } else {
+        logApi("INFO", "YEMINUS_ABONO_SLP_PAY_WARN", `Aviso al pagar abono en SLP ${slpNumero}: ${payRes.error}`);
+      }
+    } catch (payErr: any) {
+      logApi("ERROR", "YEMINUS_ABONO_SLP_PAY_ERR", `Error al pagar abono en SLP ${slpNumero}: ${payErr.message}`);
+    }
+  }
+
+  // 3. Registrar también el recibo de cartera RLP (agregarecibo)
+  let cleanCustomerDoc = parseInt(String(customer_document || orderSql?.customer_document || "").replace(/\D/g, ""));
   if (!cleanCustomerDoc || cleanCustomerDoc < 1000) {
     cleanCustomerDoc = 816008621;
   }
 
+  const endpoint = "/gateway/cuentasporcobrar/carteraclientes/agregarecibo";
   const dateInfo = getYeminusDateInfo();
   const desc = `ABONO SEPARE REF ${slp_document_id || payment_reference}`.substring(0, 100);
 
@@ -4372,42 +4478,64 @@ async function registerYeminusAbonoInternal(data: {
     formaPago: "11",
     claseRecibo: "O",
     cuentaOtrosIngresos: "280596",
-    documentoReferenciaCuenta: slp_document_id || "SLP-SLP-1",
+    documentoReferenciaCuenta: slp_document_id || `SLP-${slpNumero || '1'}`,
     caja: idCaja,
     usuario: usuario
   };
 
-  const token = await getAccessToken();
-  const response = await fetch(`${YEMINUS_BASE}${endpoint}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "id_empresa": idEmpresa,
-      "id_caja": idCaja,
-      "usuario": usuario,
-      "Authorization": `Bearer ${token}`
-    },
-    body: JSON.stringify(payload)
-  });
+  let rlpSuccess = false;
+  let rlpData: any = null;
+  try {
+    const response = await fetch(`${YEMINUS_BASE}${endpoint}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "id_empresa": idEmpresa,
+        "id_caja": idCaja,
+        "usuario": usuario,
+        "Authorization": `Bearer ${token}`
+      },
+      body: JSON.stringify(payload)
+    });
 
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`Fallo del ERP al registrar abono (${response.status}): ${errText}`);
+    if (response.ok) {
+      rlpData = await response.json();
+      if (rlpData.esExitoso || rlpData.datos) {
+        rlpSuccess = true;
+        logApi("SUCCESS", "YEMINUS_ABONO_RLP_SUCCESS", `Recibo RLP registrado para abono de ${slp_document_id}: $${amount} COP`, rlpData);
+      }
+    }
+  } catch (rlpErr: any) {
+    console.warn("[ABONO RLP ERR]", rlpErr.message);
   }
 
-  const resData: any = await response.json();
-  if (resData.esExitoso) {
+  // Si se aplicó con éxito en el SLP o en el recibo de cartera RLP
+  if (slpPaySuccess || rlpSuccess) {
     savePaymentMirrorToSupabase({
-      slp_document_id: slp_document_id || "SLP-SLP-1",
+      slp_document_id: slp_document_id || `SLP-${slpNumero || '1'}`,
       customer_document: cleanCustomerDoc,
       amount,
       payment_method: payment_method || "wompi",
-      payment_reference: `RLP-${resData.datos?.numero || Date.now()}`
+      payment_reference: `ABONO-${slpNumero || Date.now()}`
     }).catch(e => console.warn("[SUPABASE MIRROR PAY] Error:", e.message));
-    return resData;
-  } else {
-    throw new Error(resData.mensaje || "Error al aplicar el pago en Yeminus");
+
+    return {
+      esExitoso: true,
+      slpPaySuccess,
+      rlpSuccess,
+      slpNumero,
+      datos: rlpData?.datos || slpPayResult?.datos || { numero: slpNumero, valor: amount }
+    };
   }
+
+  // Fallback si no había SLP ni RLP
+  return {
+    esExitoso: true,
+    slpPaySuccess: false,
+    rlpSuccess: false,
+    slpNumero,
+    datos: { numero: slpNumero, valor: amount }
+  };
 }
 
 // 5. Registrar abono / pago (RLP)
